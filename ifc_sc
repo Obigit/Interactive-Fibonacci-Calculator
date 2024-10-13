@@ -1,0 +1,447 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ArrowUpCircle, ArrowDownCircle, RefreshCw } from "lucide-react"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Bar } from 'recharts'
+import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+const countries = [
+  { code: "DE", name: "Germany", icon: "🇩🇪", language: "de" },
+  { code: "US", name: "United States", icon: "🇺🇸", language: "en" },
+  { code: "FR", name: "France", icon: "🇫🇷", language: "fr" },
+  { code: "ES", name: "Spain", icon: "🇪🇸", language: "es" },
+  { code: "IT", name: "Italy", icon: "🇮🇹", language: "it" },
+  { code: "JP", name: "Japan", icon: "🇯🇵", language: "ja" },
+]
+
+const currencyPairs = [
+  "EURUSD",
+  "GBPUSD",
+  "USDJPY",
+  "USDCHF",
+  "AUDUSD",
+  "USDCAD",
+  "NZDUSD",
+  "EURGBP",
+  "EURJPY",
+  "GBPJPY",
+]
+
+const fetchLiveData = async (symbol: string) => {
+  await new Promise(resolve => setTimeout(resolve, 500))
+  const basePrice = {
+    EURUSD: 1.1,
+    GBPUSD: 1.3,
+    USDJPY: 110,
+    USDCHF: 0.9,
+    AUDUSD: 0.75,
+    USDCAD: 1.25,
+    NZDUSD: 0.7,
+    EURGBP: 0.85,
+    EURJPY: 130,
+    GBPJPY: 150,
+  }[symbol] || 1
+  const randomFactor = () => 1 + (Math.random() - 0.5) * 0.01
+  const open = basePrice * randomFactor()
+  const close = basePrice * randomFactor()
+  const high = Math.max(open, close) * (1 + Math.random() * 0.005)
+  const low = Math.min(open, close) * (1 - Math.random() * 0.005)
+  return {
+    open,
+    high,
+    low,
+    close,
+    volume: Math.floor(Math.random() * 1000000),
+  }
+}
+
+export default function InteractiveFibonacciCalculator() {
+  const [symbol, setSymbol] = useState("EURUSD")
+  const [prices, setPrices] = useState({ open: 1, high: 1, low: 1, current: 1 }) // Updated initial state
+  const [capital, setCapital] = useState(10000)
+  const [risk, setRisk] = useState(2)
+  const [results, setResults] = useState<any>(null)
+  const [currentDateTime, setCurrentDateTime] = useState(new Date())
+  const [selectedCountry, setSelectedCountry] = useState(countries[0])
+  const [isLoading, setIsLoading] = useState(false)
+  const [candlestickData, setCandlestickData] = useState<any[]>([])
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentDateTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    const updateLiveData = async () => {
+      setIsLoading(true)
+      try {
+        const newPrices = await fetchLiveData(symbol)
+        setPrices({
+          open: newPrices.open,
+          high: newPrices.high,
+          low: newPrices.low,
+          current: newPrices.close,
+        })
+        setCandlestickData(prevData => {
+          const newData = [...prevData, { ...newPrices, time: new Date().toLocaleTimeString() }]
+          return newData.slice(-20)
+        })
+      } catch (error) {
+        console.error("Error fetching live data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    updateLiveData()
+    const intervalId = setInterval(updateLiveData, 5000)
+    return () => clearInterval(intervalId)
+  }, [symbol])
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const calculatedResults = calculateFibonacciLevels()
+    if (calculatedResults) {
+      setResults(calculatedResults)
+    } else {
+      console.error("Unable to calculate Fibonacci levels")
+      // Optionally, you can set an error state here to display to the user
+    }
+  }
+
+  const calculateFibonacciLevels = () => {
+    const { open, high, low, current } = prices
+    if (!open || !high || !low || !current) {
+      return null // Return null if any required value is missing
+    }
+    const trend = current >= open ? "Bullish" : "Bearish"
+    const range = trend === "Bullish" ? high - low : low - high
+    
+    // New Fibonacci levels
+    const fiboLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 4.236]
+    
+    const fibLevels = fiboLevels.map(level => {
+      const price = trend === "Bullish"
+        ? low + (range * level)
+        : high - (range * level)
+      return {
+        fibonacci: `${(level * 100).toFixed(1)}%`,
+        price: price,
+        pips: Math.abs(price - current) / 0.0001, // Assuming 4 decimal places for pip calculation
+      }
+    })
+
+    const takeProfit = trend === "Bullish" ? fibLevels[fibLevels.length - 1].price : fibLevels[0].price
+    const stopLoss = trend === "Bullish" ? low : high
+
+    const positionSize = calculatePositionSize(capital, risk, Math.abs(current - stopLoss) / 0.0001)
+
+    return { fibLevels, positionSize, priceData: prices, trend, takeProfit, stopLoss }
+  }
+
+  const calculatePositionSize = (capital: number, risk: number, pipDistance: number) => {
+    return ((capital * risk) / 100) / pipDistance
+  }
+
+  const formatCurrency = (value: number | string): string => {
+    if (typeof value === 'number') {
+      return value.toFixed(4)
+    }
+    return value
+  }
+
+  const formatDate = (date: Date) => {
+    return new Intl.DateTimeFormat(selectedCountry.language, {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      timeZone: 'Europe/Berlin',
+    }).format(date)
+  }
+
+  return (
+    <div className="min-h-screen bg-white relative">
+      <div 
+        className="absolute inset-0 bg-no-repeat bg-center opacity-5 pointer-events-none"
+        style={{
+          backgroundImage: "url('https://hebbkx1anhila5yf.public.blob.vercel-storage.com/The%20Great%20Galilio-Lhi3TqVH5mp5pMyhSzEjAspfUBNrgD.png')",
+          backgroundSize: "contain",
+        }}
+      ></div>
+      <div className="relative z-10 space-y-8 p-8">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold">Interactive Fibonacci Calculator</h1>
+          <div className="flex items-center space-x-4">
+            <span>{formatDate(currentDateTime)}</span>
+            <Select
+              value={selectedCountry.code}
+              onValueChange={(value) => setSelectedCountry(countries.find(c => c.code === value) || countries[0])}
+            >
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Select a country" />
+              </SelectTrigger>
+              <SelectContent>
+                {countries.map((country) => (
+                  <SelectItem key={country.code} value={country.code}>
+                    <div className="flex items-center">
+                      <span className="mr-2">{country.icon}</span>
+                      <span>{country.name}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Live Candlestick Chart - {symbol}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[400px]">
+              <ChartContainer
+                config={{
+                  candlestick: {
+                    label: "Price",
+                    color: "hsl(var(--chart-1))",
+                  },
+                  volume: {
+                    label: "Volume",
+                    color: "hsl(var(--chart-2))",
+                  },
+                }}
+                className="h-full"
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={candlestickData}>
+                    <XAxis dataKey="time" />
+                    <YAxis yAxisId="price" domain={['auto', 'auto']} />
+                    <YAxis yAxisId="volume" orientation="right" />
+                    <ChartTooltip />
+                    <Legend />
+                    <Bar yAxisId="volume" dataKey="volume" fill="var(--color-volume)" opacity={0.3} />
+                    <Bar
+                      yAxisId="price"
+                      dataKey="low"
+                      fill="var(--color-candlestick)"
+                      stroke="var(--color-candlestick)"
+                      stackId="candle"
+                    />
+                    <Bar
+                      yAxisId="price"
+                      dataKey="high"
+                      fill="transparent"
+                      stroke="var(--color-candlestick)"
+                      stackId="candle"
+                    />
+                    <Bar
+                      yAxisId="price"
+                      dataKey="open"
+                      fill={(props: any) => (props.open > props.close ? "var(--color-candlestick-down)" : "var(--color-candlestick-up)")}
+                      stroke="var(--color-candlestick)"
+                      stackId="open-close"
+                    />
+                    <Bar
+                      yAxisId="price"
+                      dataKey="close"
+                      fill={(props: any) => (props.open > props.close ? "var(--color-candlestick-up)" : "var(--color-candlestick-down)")}
+                      stroke="var(--color-candlestick)"
+                      stackId="open-close"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </ChartContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Calculator Input</CardTitle>
+            <CardDescription>Enter currency pair details and risk parameters</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <Label htmlFor="symbol">Currency Pair Symbol</Label>
+                <Select value={symbol} onValueChange={setSymbol}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select currency pair" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currencyPairs.map((pair) => (
+                      <SelectItem key={pair} value={pair}>
+                        {pair}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="open">Open Price</Label>
+                  <Input
+                    id="open"
+                    type="number"
+                    value={prices.open}
+                    readOnly
+                    className="bg-gray-100"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="high">Highest Price</Label>
+                  <Input
+                    id="high"
+                    type="number"
+                    value={prices.high}
+                    readOnly
+                    className="bg-gray-100"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="low">Lowest Price</Label>
+                  <Input
+                    id="low"
+                    type="number"
+                    value={prices.low}
+                    readOnly
+                    className="bg-gray-100"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="current">Current Price</Label>
+                  <Input
+                    id="current"
+                    type="number"
+                    value={prices.current}
+                    readOnly
+                    className="bg-gray-100"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="capital">Total Capital</Label>
+                <Input
+                  id="capital"
+                  type="number"
+                  value={capital}
+                  onChange={(e) => setCapital(parseFloat(e.target.value))}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="risk">Risk Percentage</Label>
+                <Input
+                  id="risk"
+                  type="number"
+                  value={risk}
+                  onChange={(e) => setRisk(parseFloat(e.target.value))}
+                  step="0.1"
+                  required
+                />
+              </div>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Calculate Fibonacci Levels'
+                )}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        {results && results.fibLevels && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Results for {symbol}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fibonacci Level</TableHead>
+                    <TableHead>Price</TableHead>
+                    
+                    <TableHead>Pips from Current</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {results.fibLevels.map((level: any, index: number) => (
+                    <TableRow key={index}>
+                      <TableCell>{level.fibonacci}</TableCell>
+                      <TableCell>{formatCurrency(level.price)}</TableCell>
+                      <TableCell>{formatCurrency(level.pips)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <div className="mt-4 space-y-2">
+                <p>Trend: {results.trend} {results.trend === "Bullish" ? <ArrowUpCircle className="inline  text-green-500" /> : <ArrowDownCircle className="inline text-red-500" />}</p>
+                <p>Recommended Position Size: {formatCurrency(results.positionSize)}</p>
+                <p>Take Profit: {formatCurrency(results.takeProfit)}</p>
+                <p>Stop Loss: {formatCurrency(results.stopLoss)}</p>
+              </div>
+              <div className="h-[400px] mt-8">
+                <ChartContainer
+                  config={{
+                    price: {
+                      label: "Price",
+                      color: "hsl(var(--chart-1))",
+                    },
+                  }}
+                  className="h-full"
+                >
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={results.fibLevels}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="fibonacci" />
+                      <YAxis 
+                        domain={['auto', 'auto']}
+                        tickFormatter={(value) => formatCurrency(value)}
+                      />
+                      <ChartTooltip 
+                        content={({ active, payload, label }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="bg-white p-2 border border-gray-300 rounded shadow">
+                                <p className="font-bold">{label}</p>
+                                <p>Price: {formatCurrency(payload[0].value)}</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="price" stroke="var(--color-price)" name="Price" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </ChartContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  )
+}
